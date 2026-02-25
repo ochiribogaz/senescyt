@@ -63,7 +63,7 @@ const invertBirthDate = (dateStr) => {
 };
 
 const toSafeName = (personName) =>
-    personName.replace(/[^\w\-]/g, '');
+    personName.replace(/[^\w\- ]/g, '');
 
 const clearInput = async (page, selector) => {
     await page.evaluate((sel) => {
