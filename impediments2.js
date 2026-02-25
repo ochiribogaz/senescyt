@@ -56,7 +56,7 @@ const generateExcel = (allResults, certPaths) => {
         name:          r.name,
         birthDate:     r.birthDate,
         hasImpediment: r.hasImpediment,
-        ...(certPaths && { certificado: certPaths.get(r.id) ?? '' }),
+        ...(certPaths && { certificado: `=HYPERLINK("${certPaths.get(r.id) ?? ''}","Abrir certificado")` }),
     }));
 
     const excelPath = path.join(impedimentsDownloadPath, 'impedimentos.xlsx');
