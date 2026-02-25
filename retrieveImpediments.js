@@ -73,7 +73,9 @@ const clearInput = async (page, selector) => {
 };
 
 export const consolidateCertificates = (results) => {
-    for (const { name, tempDir } of results) {
+    const certPaths = new Map();
+
+    for (const { id, name, tempDir } of results) {
         const files = fs.readdirSync(tempDir).filter(f => !f.endsWith('.crdownload'));
         if (!files.length) {
             console.warn(`⚠️ No file found in ${tempDir}, skipping.`);
@@ -81,11 +83,16 @@ export const consolidateCertificates = (results) => {
         }
 
         const safeName = toSafeName(name);
-        const finalPath = path.join(impedimentsDownloadPath, `${safeName}.pdf`);
+        const fileName = `${safeName}.pdf`;
+        const finalPath = path.join(impedimentsDownloadPath, fileName);
 
         fs.renameSync(path.join(tempDir, files[0]), finalPath);
         fs.rmdirSync(tempDir);
+
+        certPaths.set(id, `./${fileName}`);
     }
+
+    return certPaths;
 };
 
 /**
@@ -95,6 +102,7 @@ export const scrapeImpediment = async ({
     id,
     birthDate,
     browser,
+    downloadCertificates = true,
 }) => {
     let page;
     let retried = false;
@@ -102,8 +110,9 @@ export const scrapeImpediment = async ({
     const idInputSelector = '#txtNumeroDocumento';
     const birthInputSelector = '#txtFechaI';
     const nameSelector = 'label.control-label + .input-group span.form-control';
+    const impedimentSelector = 'xpath=//label[contains(normalize-space(.), "REGISTRA IMPEDIMENTO")]/following-sibling::div//span[contains(@class, "form-control")]';
 
-    const tempDir = path.join(impedimentsDownloadPath, id);
+    const tempDir = downloadCertificates ? path.join(impedimentsDownloadPath, id) : null;
 
     try {
         page = await browser.newPage();
@@ -112,9 +121,10 @@ export const scrapeImpediment = async ({
         page.setDefaultTimeout(120_000);
         page.setDefaultNavigationTimeout(120_000);
 
-        fs.mkdirSync(tempDir, { recursive: true });
-
-        await setDownloadPath({ page, downloadPath: path.resolve(tempDir) });
+        if (downloadCertificates) {
+            fs.mkdirSync(tempDir, { recursive: true });
+            await setDownloadPath({ page, downloadPath: path.resolve(tempDir) });
+        }
 
         await page.goto(IMPEDIMENTS_URL, { waitUntil: 'networkidle2' });
 
@@ -132,6 +142,7 @@ export const scrapeImpediment = async ({
         );
 
         let currentBirthDate = birthDate;
+        let hasImpediment = null;
 
         while (true) {
             await clearInput(page, birthInputSelector);
@@ -142,32 +153,43 @@ export const scrapeImpediment = async ({
             ).click();
 
             const flow = await Promise.race([
-                page.waitForSelector(
-                    'xpath=//button[contains(normalize-space(.), "GENERAR CERTIFICADO")]',
-                    { visible: true }
-                ).then(() => 'GENERAR'),
+                page.waitForSelector(impedimentSelector, { visible: true })
+                    .then(() => 'RESULT'),
 
                 page.waitForSelector('#swal2-title', { visible: true })
                     .then(() => 'SWEETALERT'),
             ]);
 
-            if (flow === 'GENERAR') {
-                await page.locator(
-                    'xpath=//button[contains(normalize-space(.), "GENERAR CERTIFICADO")]'
-                ).click();
-
-                await page.waitForSelector('#swal2-title', { visible: true });
-
-                const swalTitle = await page.$eval(
-                    '#swal2-title',
-                    el => el.textContent.trim().toUpperCase()
+            if (flow === 'RESULT') {
+                hasImpediment = await page.$eval(
+                    impedimentSelector,
+                    el => el.textContent.trim()
                 );
 
-                if (swalTitle === 'ERROR') {
-                    throw new Error(`SweetAlert ERROR para la cédula ${id}`);
+                if (downloadCertificates) {
+                    await page.waitForSelector(
+                        'xpath=//button[contains(normalize-space(.), "GENERAR CERTIFICADO")]',
+                        { visible: true }
+                    );
+
+                    await page.locator(
+                        'xpath=//button[contains(normalize-space(.), "GENERAR CERTIFICADO")]'
+                    ).click();
+
+                    await page.waitForSelector('#swal2-title', { visible: true });
+
+                    const swalTitle = await page.$eval(
+                        '#swal2-title',
+                        el => el.textContent.trim().toUpperCase()
+                    );
+
+                    if (swalTitle === 'ERROR') {
+                        throw new Error(`SweetAlert ERROR para la cédula ${id}`);
+                    }
+
+                    await page.locator('button.swal2-confirm').click();
                 }
 
-                await page.locator('button.swal2-confirm').click();
                 break;
             }
 
@@ -202,11 +224,14 @@ export const scrapeImpediment = async ({
             }
         }
 
-        await waitForDownload(tempDir);
+        if (downloadCertificates) {
+            await waitForDownload(tempDir);
+        }
 
         return {
             id,
             name: personName,
+            hasImpediment,
             tempDir,
         };
 
@@ -221,7 +246,12 @@ export const scrapeImpediment = async ({
 /**
  * Processes a batch of people sequentially using its own browser instance.
  */
-export const retrieveImpediments = async ({ people, puppeteerOptions = {}, onProgress }) => {
+export const retrieveImpediments = async ({
+    people,
+    puppeteerOptions = {},
+    onProgress,
+    downloadCertificates = true,
+}) => {
     const browser = await puppeteer.launch({ headless: false, ...puppeteerOptions });
 
     const results = [];
@@ -236,10 +266,11 @@ export const retrieveImpediments = async ({ people, puppeteerOptions = {}, onPro
                     browser,
                     id: person.id,
                     birthDate,
+                    downloadCertificates,
                 });
 
-                results.push(result);
-                onProgress?.({ id: person.id, name: result.name, success: true });
+                results.push({ ...result, birthDate: person.birthDate });
+                onProgress?.({ id: person.id, name: result.name, hasImpediment: result.hasImpediment, success: true });
             } catch (error) {
                 errors.push({ person, error });
                 onProgress?.({ id: person.id, name: person.name, success: false, error });
