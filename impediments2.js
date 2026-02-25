@@ -61,15 +61,14 @@ const generateExcel = (allResults, certPaths) => {
 
     const excelPath = path.join(impedimentsDownloadPath, 'impedimentos.xlsx');
 
-    xlsx(
+    const buffer = xlsx(
         [{ sheet: 'Impedimentos', columns, content }],
-        { fileName: 'impedimentos', writeOptions: { type: 'buffer' } },
-        (buffer) => {
-            fs.mkdirSync(impedimentsDownloadPath, { recursive: true });
-            fs.writeFileSync(excelPath, buffer);
-            console.log(`Excel guardado: ${excelPath}`);
-        }
+        { writeOptions: { type: 'buffer' } }
     );
+
+    fs.mkdirSync(impedimentsDownloadPath, { recursive: true });
+    fs.writeFileSync(excelPath, buffer);
+    console.log(`Excel guardado: ${excelPath}`);
 };
 
 (async () => {
