@@ -1,4 +1,5 @@
 import { createInterface } from 'readline/promises';
+import cliProgress from 'cli-progress';
 import { retrieveImpediments, consolidateCertificates } from './retrieveImpediments.js';
 import { calculateBrowserCount } from './utils/browserResources.js';
 import people from './impedimentsCari.json' assert { type: 'json' };
@@ -15,15 +16,15 @@ const batchPeople = (arr, n) => {
 
 (async () => {
     try {
-        const { cpuCount, totalMemoryGB, freeMemoryGB, recommended } =
+        const { cpuCount, totalMemoryGB, availableMemoryGB, recommended } =
             calculateBrowserCount(people.length);
 
         console.log('\n--- System Info ---');
-        console.log(`CPUs:        ${cpuCount}`);
-        console.log(`Total RAM:   ${totalMemoryGB} GB`);
-        console.log(`Free RAM:    ${freeMemoryGB} GB`);
+        console.log(`CPUs:              ${cpuCount}`);
+        console.log(`Total RAM:         ${totalMemoryGB} GB`);
+        console.log(`Available RAM:     ${availableMemoryGB} GB`);
         console.log('-------------------');
-        console.log(`People to process:   ${people.length}`);
+        console.log(`People to process:    ${people.length}`);
         console.log(`Recommended browsers: ${recommended}`);
 
         let browserCount;
@@ -42,9 +43,31 @@ const batchPeople = (arr, n) => {
 
         console.log(`\nStarting ${batches.length} browser(s) — ${batches.map(b => b.length).join(', ')} people each...\n`);
 
+        const multibar = new cliProgress.MultiBar({
+            clearOnComplete: false,
+            hideCursor: true,
+            format: ' Progress |{bar}| {value}/{total} ({percentage}%)',
+        }, cliProgress.Presets.shades_grey);
+
+        const bar = multibar.create(people.length, 0);
+
+        let processed = 0;
+
+        const onProgress = ({ id, name, success, error }) => {
+            processed++;
+            bar.update(processed);
+            if (success) {
+                multibar.log(`[${processed}/${people.length}] SUCCESS: ${name}\n`);
+            } else {
+                multibar.log(`[${processed}/${people.length}] ERROR [${id}]: ${error.message}\n`);
+            }
+        };
+
         const batchResults = await Promise.all(
-            batches.map(batch => retrieveImpediments({ people: batch }))
+            batches.map(batch => retrieveImpediments({ people: batch, onProgress }))
         );
+
+        multibar.stop();
 
         const allResults = batchResults.flatMap(r => r.results);
         const allErrors  = batchResults.flatMap(r => r.errors);
@@ -52,14 +75,7 @@ const batchPeople = (arr, n) => {
         console.log(`\nConsolidating ${allResults.length} certificate(s)...`);
         consolidateCertificates(allResults);
 
-        if (allErrors.length) {
-            console.error(`\n${allErrors.length} error(s):`);
-            allErrors.forEach(({ person, error }) =>
-                console.error(`  [${person.id}] ${error.message}`)
-            );
-        }
-
-        console.log('\nDone.');
+        console.log(`Done. ${allResults.length} OK, ${allErrors.length} error(s).`);
     } catch (error) {
         rl.close();
         console.error(error);

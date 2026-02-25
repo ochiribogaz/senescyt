@@ -63,9 +63,7 @@ const invertBirthDate = (dateStr) => {
 };
 
 const toSafeName = (personName) =>
-    personName
-        .replace(/\s+/g, '_')
-        .replace(/[^\w\-]/g, '');
+    personName.replace(/[^\w\-]/g, '');
 
 const clearInput = async (page, selector) => {
     await page.evaluate((sel) => {
@@ -223,7 +221,7 @@ export const scrapeImpediment = async ({
 /**
  * Processes a batch of people sequentially using its own browser instance.
  */
-export const retrieveImpediments = async ({ people, puppeteerOptions = {} }) => {
+export const retrieveImpediments = async ({ people, puppeteerOptions = {}, onProgress }) => {
     const browser = await puppeteer.launch({ headless: false, ...puppeteerOptions });
 
     const results = [];
@@ -240,10 +238,11 @@ export const retrieveImpediments = async ({ people, puppeteerOptions = {} }) => 
                     birthDate,
                 });
 
-                console.log('SUCCESS:', result.name);
                 results.push(result);
+                onProgress?.({ id: person.id, name: result.name, success: true });
             } catch (error) {
                 errors.push({ person, error });
+                onProgress?.({ id: person.id, name: person.name, success: false, error });
             }
         }
     } finally {
